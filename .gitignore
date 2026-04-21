@@ -1,0 +1,32 @@
+# Visual Studio specifics
+.vs/
+x64/
+x86/
+Debug/
+Release/
+*.user
+*.suo
+*.db
+*.opendb
+*.sln.doc
+*.userosscache
+*.sln.ids
+*.sln.cache
+
+# MSVC Build Artifacts
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.log
+*.tlog
+*.lastbuildstate
+*.idb
+
+# Data files (optional, depends if you want to ship a default users.txt)
+# users.txt
+
+# OS specifics
+Thumbs.db
+.DS_Store

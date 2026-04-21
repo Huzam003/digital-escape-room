@@ -1,0 +1,363 @@
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <random>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+using namespace std;
+
+// ==========================================
+// 🎨 COLOR HELPER (Cross-Platform)
+// ==========================================
+inline void set_color(int color) {
+#ifdef _WIN32
+  HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+  if (hConsole != INVALID_HANDLE_VALUE) {
+    SetConsoleTextAttribute(hConsole, (WORD)color);
+  }
+#else
+  // Fallback for Linux/OnlineGDB (ANSI basic support)
+  // We just print normally to avoid complicated ANSI sequences for now
+  (void)color;
+#endif
+}
+
+// ==========================================
+// 👤 USER CLASS
+// ==========================================
+class User {
+private:
+  string username;
+  string passwordHash;
+  int progress;
+
+  string hashPassword(const string &password) {
+    hash<string> hasher;
+    return to_string(hasher(password));
+  }
+
+public:
+  User() : username(""), passwordHash(""), progress(0) {}
+
+  bool authenticate(const string &user, const string &pass) {
+    string hashedPass = hashPassword(pass);
+    ifstream inFile("users.txt");
+    if (!inFile.is_open())
+      return false;
+
+    string line;
+    while (getline(inFile, line)) {
+      stringstream ss(line);
+      string fileUser, fileHash;
+      int fileProgress = 0;
+
+      getline(ss, fileUser, ':');
+      getline(ss, fileHash, ':');
+      ss >> fileProgress;
+
+      if (fileUser == user && fileHash == hashedPass) {
+        username = user;
+        passwordHash = hashedPass;
+        progress = fileProgress;
+        inFile.close();
+        return true;
+      }
+    }
+    inFile.close();
+    return false;
+  }
+
+  void saveProgress() {
+    vector<string> lines;
+    ifstream inFile("users.txt");
+    if (inFile.is_open()) {
+      string line;
+      while (getline(inFile, line)) {
+        stringstream ss(line);
+        string fileUser, fileHash;
+        int fileProgress = 0;
+
+        getline(ss, fileUser, ':');
+        getline(ss, fileHash, ':');
+        ss >> fileProgress;
+
+        if (fileUser == username) {
+          lines.push_back(fileUser + ":" + passwordHash + ":" +
+                          to_string(progress));
+        } else {
+          lines.push_back(line);
+        }
+      }
+      inFile.close();
+    }
+
+    bool found = false;
+    for (auto &l : lines) {
+      if (l.rfind(username + ":", 0) == 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      lines.push_back(username + ":" + passwordHash + ":" +
+                      to_string(progress));
+
+    ofstream outFile("users.txt");
+    for (const auto &l : lines)
+      outFile << l << "\n";
+    outFile.close();
+  }
+
+  // Getters & Setters
+  void setUsername(string u) { username = u; }
+  string getUsername() const { return username; }
+  void setPassword(string p) { passwordHash = hashPassword(p); }
+  int getProgress() const { return progress; }
+  void setProgress(int p) { progress = p; }
+};
+
+// ==========================================
+// 🧩 PUZZLE SYSTEM
+// ==========================================
+class Puzzle {
+public:
+  virtual ~Puzzle() {}
+  virtual void present() const = 0;
+  virtual bool checkAnswer(const string &input) const = 0;
+  virtual string getRewardItem() const = 0;
+};
+
+class TextPuzzle : public Puzzle {
+private:
+  string question, answer, reward;
+
+public:
+  TextPuzzle(string q, string a, string r)
+      : question(q), answer(a), reward(r) {}
+  void present() const override { cout << question << "\nYour answer: "; }
+  bool checkAnswer(const string &input) const override {
+    return (input == answer || input.find(answer) != string::npos);
+  }
+  string getRewardItem() const override { return reward; }
+};
+
+class CaesarPuzzle : public Puzzle {
+private:
+  string cipherText, clearText, reward;
+
+public:
+  CaesarPuzzle(string ci, string cl, string r)
+      : cipherText(ci), clearText(cl), reward(r) {}
+  void present() const override {
+    cout << "Decrypt this: " << cipherText << "\n>> ";
+  }
+  bool checkAnswer(const string &input) const override {
+    return (input == clearText);
+  }
+  string getRewardItem() const override { return reward; }
+};
+
+class LogicGridPuzzle : public Puzzle {
+private:
+  string instructions, target, reward;
+
+public:
+  LogicGridPuzzle(string i, string t, string r)
+      : instructions(i), target(t), reward(r) {}
+  void present() const override {
+    cout << instructions << "\nFormat: Name:Pet,Color;... \n>> ";
+  }
+  bool checkAnswer(const string &input) const override {
+    string clean;
+    for (char c : input)
+      if (c != ' ')
+        clean += c;
+    return (clean == target);
+  }
+  string getRewardItem() const override { return reward; }
+};
+
+class SymbolPuzzle : public Puzzle {
+private:
+  string sequence, answer, reward;
+
+public:
+  SymbolPuzzle(string s, string a, string r)
+      : sequence(s), answer(a), reward(r) {}
+  void present() const override {
+    cout << "Ancient symbols on the floor stone: " << sequence << " ... ?\n>> ";
+  }
+  bool checkAnswer(const string &input) const override {
+    string clean;
+    for (char c : input)
+      if (c != ' ')
+        clean += (char)toupper(c);
+    return (clean == answer);
+  }
+  string getRewardItem() const override { return reward; }
+};
+
+// ==========================================
+// 🏰 ROOM & GAME MANAGER
+// ==========================================
+class Room {
+public:
+  string name;
+  vector<Puzzle *> puzzles;
+  Room(string n) : name(n) {}
+  void addPuzzle(Puzzle *p) { puzzles.push_back(p); }
+};
+
+class GameManager {
+private:
+  User currentUser;
+  vector<Room> rooms;
+  vector<string> inventory;
+
+  string toLowerCase(const string &str) {
+    string low = str;
+    for (char &c : low)
+      c = (char)tolower(c);
+    return low;
+  }
+
+  void setupGame() {
+    Room r1("The Whispering Hall");
+    r1.addPuzzle(new TextPuzzle(
+        "I speak without a mouth and hear without ears. What am I?", "echo",
+        "Ancient Echo Stone"));
+    r1.addPuzzle(new TextPuzzle("What has keys but no locks?", "keyboard",
+                                "Rusty Keycap"));
+    r1.addPuzzle(new TextPuzzle("I grow but am not alive; air is my life, "
+                                "water is my death. What am I?",
+                                "fire", "Flame Shard"));
+    rooms.push_back(r1);
+
+    Room r2("The Cryptic Cave");
+    r2.addPuzzle(new CaesarPuzzle("Shift 3 left: 'wkh frgh lv 123'",
+                                  "the code is 123", "Cipher Scroll"));
+    rooms.push_back(r2);
+
+    Room r3("The Analytical Chamber");
+    string logicText =
+        "Ali, Hamza, Ayesha. Dog, Cat, Parrot. Red, Blue, Green.\n1. Ali no "
+        "Dog. 2. Cat owner likes Blue. 3. Hamza not Green.";
+    r3.addPuzzle(new LogicGridPuzzle(
+        logicText, "ali:cat,blue;hamza:dog,red;ayesha:parrot,green",
+        "Logic Badge"));
+    rooms.push_back(r3);
+
+    Room r4("The Ancient Floor");
+    r4.addPuzzle(new SymbolPuzzle("I, III, VI, X", "XV", "Jeweled Compass"));
+    rooms.push_back(r4);
+  }
+
+public:
+  GameManager() { setupGame(); }
+  ~GameManager() {
+    for (auto &r : rooms)
+      for (auto p : r.puzzles)
+        delete p;
+  }
+
+  void start() {
+    // Init file
+    ifstream f("users.txt");
+    if (!f) {
+      ofstream c("users.txt");
+      c.close();
+    }
+    f.close();
+
+    set_color(14);
+    cout << "==== DIGITAL ESCAPE ROOM ====\n";
+    set_color(15);
+
+    bool loggedIn = false;
+    while (!loggedIn) {
+      int c;
+      cout << "1. Login  2. Signup\n>> ";
+      cin >> c;
+      string u, p;
+      cout << "User: ";
+      cin >> u;
+      cout << "Pass: ";
+      cin >> p;
+      if (c == 1) {
+        if (currentUser.authenticate(u, p))
+          loggedIn = true;
+        else {
+          set_color(12);
+          cout << "Failed!\n";
+          set_color(15);
+        }
+      } else {
+        currentUser.setUsername(u);
+        currentUser.setPassword(p);
+        currentUser.setProgress(0);
+        currentUser.saveProgress();
+        cout << "Signed up! Now login.\n";
+      }
+    }
+
+    int total = 0;
+    for (auto &r : rooms)
+      total += r.puzzles.size();
+
+    while (true) {
+      int prog = currentUser.getProgress();
+      if (prog >= total) {
+        cout << "You escaped!\n";
+        break;
+      }
+
+      int r_idx = 0, p_idx = 0, count = 0;
+      for (int i = 0; i < (int)rooms.size(); i++) {
+        if (prog < count + (int)rooms[i].puzzles.size()) {
+          r_idx = i;
+          p_idx = prog - count;
+          break;
+        }
+        count += rooms[i].puzzles.size();
+      }
+
+      cout << "\n--- " << rooms[r_idx].name << " ---\n";
+      Puzzle *p = rooms[r_idx].puzzles[p_idx];
+      p->present();
+
+      string input;
+      cin.ignore(numeric_limits<streamsize>::max(), '\n');
+      getline(cin, input);
+      if (p->checkAnswer(toLowerCase(input))) {
+        set_color(10);
+        cout << "Correct!\n";
+        set_color(15);
+        inventory.push_back(p->getRewardItem());
+        currentUser.setProgress(prog + 1);
+        currentUser.saveProgress();
+      } else {
+        set_color(12);
+        cout << "Wrong!\n";
+        set_color(15);
+      }
+    }
+  }
+};
+
+// ==========================================
+// 🚀 MAIN FUNCTION
+// ==========================================
+int main() {
+  GameManager game;
+  game.start();
+  return 0;
+}
